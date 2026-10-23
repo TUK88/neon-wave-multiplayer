@@ -1,2 +1,2 @@
-# neon-wave-multiplayer
+# NEON WAVE SERVER
 PLYING FOR FUN
