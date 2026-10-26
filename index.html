@@ -82,10 +82,10 @@ body{padding:18px}.shell{width:min(1100px,100%);margin:0 auto}.topbar{display:fl
       <div class="canvas-wrap">
         <canvas id="gameCanvas" width="960" height="540" aria-label="Neon Wave game area"></canvas>
         <div id="overlay" class="overlay">
-          <div class="overlay-card"><p class="eyebrow">READY, PILOT?</p><h2>5000 metres.</h2><p>Hold the screen, mouse button, or SPACE to rise. Release to fall.</p><button id="beginBtn" class="primary">START RACE</button></div>
+          <div class="overlay-card"><p class="eyebrow">READY, PILOT?</p><h2>5000 metres.</h2><p>Tap or hold ▲ UP, the screen, or SPACE / ↑ to rise. Release to fall.</p><button id="beginBtn" class="primary">START RACE</button></div>
         </div>
       </div>
-      <div class="game-controls"><span>HOLD <kbd>SPACE</kbd> / <kbd>↑</kbd> / BUTTON TO RISE</span><button id="flightButton" class="flight-button" type="button" aria-label="Hold to fly up">▲ UP</button><button id="pauseBtn" class="secondary compact">Ⅱ PAUSE</button><button id="retryBtn" class="secondary compact">↻ RESTART</button><button id="menuBtn" class="secondary compact">MENU</button></div>
+      <div class="game-controls"><span>TAP / HOLD <kbd>SPACE</kbd> / <kbd>↑</kbd> / ▲ UP TO RISE</span><button id="flightButton" class="flight-button" type="button" aria-label="Tap or hold to fly up">▲ UP</button><button id="pauseBtn" class="secondary compact">Ⅱ PAUSE</button><button id="retryBtn" class="secondary compact">↻ RESTART</button><button id="menuBtn" class="secondary compact">MENU</button></div>
       <p id="gameMessage" class="small-note">Tip: short taps help you thread through tight gaps.</p>
     </section>
     <footer>NEON WAVE <span>•</span> Lightweight HTML5 Canvas build</footer>
@@ -104,7 +104,7 @@ body{padding:18px}.shell{width:min(1100px,100%);margin:0 auto}.topbar{display:fl
   let networkConnectPromise = null, lastStateSend = 0;
   let serverBaseUrl = localStorage.getItem("neonWaveServerUrl") || (location.hostname.endsWith(".onrender.com") ? location.origin : "");
   let disconnectingRoom = false;
-  let holding = false, paused = false, raf = 0, lastTime = 0, distance = 0;
+  let holding = false, paused = false, raf = 0, lastTime = 0, distance = 0, boostUntil = 0;
   const flightPointers = new Set(), flightKeys = new Set();
   let ship = {x:170,y:H/2,vy:0,r:13}, obstacles = [], particles = [], elapsed = 0, lastSpawn = 0;
   let practice = true, countdown = 0, score = 0, crashed = false;
@@ -356,12 +356,16 @@ body{padding:18px}.shell{width:min(1100px,100%);margin:0 auto}.topbar{display:fl
     $("redeemBtn").disabled=false;
     $("redeemBtn").textContent=usedToday?"REDEEMED TODAY":canRedeem?"REDEEM":`${lives} LIVES ACTIVE`;
   }
-  function resetGame(){
-    cancelAnimationFrame(raf); raf=0; holding=false; paused=false; flightPointers.clear(); flightKeys.clear();
-    gameState="ready"; distance=0; elapsed=0; lastSpawn=0; countdown=0; score=0; crashed=false;
+  function resetGame({keepRaceClock=false}={}){
+    cancelAnimationFrame(raf); raf=0; holding=false; paused=false; boostUntil=0; flightPointers.clear(); flightKeys.clear();
+    const resumeTime = keepRaceClock && mode === "race" ? timeRemaining : null;
+    const resumeElapsed = keepRaceClock && mode === "race" ? elapsed : null;
+    const resumeBots = keepRaceClock && mode === "race" ? bots : null;
+    gameState="ready"; distance=0; elapsed=resumeElapsed ?? 0; lastSpawn=elapsed; countdown=0; score=0; crashed=false;
     targetDistance = mode === "levels" ? 500 + (level - 1) * 150 : mode === "trial" ? 999999999 : 5000;
-    timeLimit=mode==="trial"?120:300; timeRemaining=timeLimit; respawnRemaining=0; updateTimerText();
+    timeLimit=mode==="trial"?120:300; timeRemaining=resumeTime ?? timeLimit; respawnRemaining=0; updateTimerText();
     portal = null; bots = mode === "race" ? [ {name:"NOVA",y:H*.35,progress:0,speed:rand(17,33),color:"#ff4fbd",alive:true,skill:rand(.45,.9)},{name:"PIXEL",y:H*.65,progress:0,speed:rand(17,33),color:"#b6ff5d",alive:true,skill:rand(.45,.9)},{name:"ORBIT",y:H*.5,progress:0,speed:rand(17,33),color:"#b18cff",alive:true,skill:rand(.45,.9)} ] : [];
+    if(resumeBots) bots=resumeBots;
     ship={x:170,y:H/2,vy:0,r:13}; obstacles=[]; particles=[];
     $("distanceText").textContent="0 m"; $("progressFill").style.width="0%"; $("statusText").textContent="READY"; updateLives();
     $("progressLabel").textContent = mode === "levels" ? `LEVEL ${level} · ${targetDistance} M` : mode === "trial" ? "TIME TRIAL · 2 MINUTES" : "5000 M RACE · 5 MINUTES";
@@ -451,8 +455,9 @@ body{padding:18px}.shell{width:min(1100px,100%);margin:0 auto}.topbar{display:fl
     if(portal){portal.x-=speed*3.25*dt;portal.spin+=dt*2.5;if(portal.x<ship.x+22){if(mode==="levels")finishLevel();else finishRace();return;}}
     $("distanceText").textContent=Math.floor(distance)+" m";
     $("progressFill").style.width=(progressRatio()*100)+"%";
-    ship.vy += (holding ? -760 : 205)*dt;
-    ship.vy=clamp(ship.vy,-300,175);
+    syncFlightHold();
+    if(holding) ship.vy=Math.max(-190,ship.vy-680*dt);
+    else ship.vy=Math.min(155,ship.vy+420*dt);
     ship.y+=ship.vy*dt;
     if(ship.y<28 || ship.y>H-28){ crash("You hit the tunnel edge! Back to the start."); return; }
     const spawnEvery=mode==="levels"?Math.max(.42,1.45-level*.07-courseProgress*.72):mode==="trial"?Math.max(.48,1.3-courseProgress*.68):Math.max(.45,1.28-courseProgress*.78);
@@ -475,7 +480,7 @@ body{padding:18px}.shell{width:min(1100px,100%);margin:0 auto}.topbar{display:fl
     /* Finish only when the player reaches the visible portal. */
   }
   function crash(message){
-    holding=false;crashed=true;
+    holding=false;flightPointers.clear();flightKeys.clear();boostUntil=0;crashed=true;
     coins=Math.max(0,coins-2); updateCoins();
     if(mode==="trial"){
       gameState="respawning";respawnRemaining=2;obstacles=[];particles=[];ship.y=H/2;ship.vy=0;lastSpawn=elapsed;
@@ -493,10 +498,9 @@ body{padding:18px}.shell{width:min(1100px,100%);margin:0 auto}.topbar{display:fl
       $("overlay").classList.remove("hidden");$("overlay").innerHTML=`<div class="overlay-card"><p class="eyebrow">CONTINUE RUN</p><h2>${Math.floor(distance)} m</h2><p>Continuing from your crash point. Your remaining timer and progress are kept.</p><button id="beginBtn" class="primary">CONTINUE</button></div>`;
       $("beginBtn").addEventListener("click",beginRace);draw();
     });
-    const restart=$("restartFromCrash"); if(restart)restart.addEventListener("click",()=>{cancelAnimationFrame(raf);raf=0;resetGame();beginRace();});
+    const restart=$("restartFromCrash"); if(restart)restart.addEventListener("click",()=>{cancelAnimationFrame(raf);raf=0;resetGame({keepRaceClock:mode==="race"});beginRace();});
     $("menuFromCrash").addEventListener("click",()=>{cancelAnimationFrame(raf);raf=0;show(home);});
     cancelAnimationFrame(raf); raf=0; draw();
-    if(mode === "race") { lastTime=performance.now(); raf=requestAnimationFrame(loop); }
   }
   function timeExpired(){
     gameState="finished";holding=false;portal={x:ship.x+68,y:ship.y,spin:0};$("statusText").textContent="TIME UP";$("overlay").classList.remove("hidden");
@@ -606,12 +610,14 @@ body{padding:18px}.shell{width:min(1100px,100%);margin:0 auto}.topbar{display:fl
     // Bottom progress trail shows time elapsed in Time Trial, course distance otherwise.
     ctx.fillStyle="#151e3d";ctx.fillRect(0,H-8,W,8);ctx.fillStyle="#ff4fbd";ctx.fillRect(0,H-8,W*progressRatio(),8);
   }
-  function syncFlightHold(){holding=gameState==="running"&&!paused&&(flightPointers.size>0||flightKeys.size>0);}
+  function syncFlightHold(){holding=gameState==="running"&&!paused&&(flightPointers.size>0||flightKeys.size>0||performance.now()<boostUntil);}
   // A press gives an immediate upward boost; keeping any flight input held continues to lift.
   function boostUp(){
     if(gameState!=="running"||paused)return;
+    // A tap still gives a short lift, even if the pointer is released immediately.
+    boostUntil=Math.max(boostUntil,performance.now()+140);
     holding=true;
-    ship.vy=Math.min(ship.vy,-300);
+    ship.vy=Math.min(ship.vy,-120);
   }
   function releaseFlightPointer(pointerId){flightPointers.delete(pointerId);syncFlightHold();}
   updateLives(); updateCoins(); updateTimerText(); refreshRedeemState(); updateBestTrialDisplay();
@@ -643,7 +649,8 @@ body{padding:18px}.shell{width:min(1100px,100%);margin:0 auto}.topbar{display:fl
     if(!sendRoomEvent){$("lobbyStatus").textContent="Room connection is unavailable.";return;}
     sendRoomEvent({type:"start",mode:roomMode,visibility:roomVisibility}); startGame(false);
   }
-  $("startManualBtn").addEventListener("click",startRoomMatch);
+  const startManualButton=$("startManualBtn");
+  if(startManualButton) startManualButton.addEventListener("click",startRoomMatch);
   $("startLobbyBtn").addEventListener("click",()=>{
     if(lobbyStartRole==="guest"){
       if(localReadyForRoom)return;
@@ -674,20 +681,21 @@ body{padding:18px}.shell{width:min(1100px,100%);margin:0 auto}.topbar{display:fl
   });
   $("beginBtn").addEventListener("click",beginRace);
   $("pauseBtn").addEventListener("click",()=>{
-    if(gameState!=="running")return;
+    const canPause=gameState==="running"||gameState==="respawning"||(gameState==="crashed"&&mode==="race");
+    if(!canPause)return;
     paused=!paused;
     $("pauseBtn").textContent=paused?"▶ RESUME":"Ⅱ PAUSE";
     $("statusText").textContent=paused?"PAUSED":"RACING";
     if(paused){cancelAnimationFrame(raf);raf=0;}
     else{lastTime=performance.now();raf=requestAnimationFrame(loop);}
   });
-  $("retryBtn").addEventListener("click",()=>{resetGame();beginRace();});
-  $("menuBtn").addEventListener("click",()=>{cancelAnimationFrame(raf);show(home);});
+  $("retryBtn").addEventListener("click",()=>{const keepClock=mode==="race"&&(gameState==="crashed"||gameState==="respawning");resetGame({keepRaceClock:keepClock});beginRace();});
+  $("menuBtn").addEventListener("click",()=>{cancelAnimationFrame(raf);raf=0;paused=false;show(home);});
   function startFlightPointer(e){
     if(gameState!=="running"||paused)return;
     e.preventDefault();
     flightPointers.add(e.pointerId);
-    try{e.currentTarget.setPointerCapture(e.pointerId);}catch(_){}
+    if(e.currentTarget.setPointerCapture)try{e.currentTarget.setPointerCapture(e.pointerId);}catch(_){}
     boostUp();
   }
   function endFlightPointer(e){releaseFlightPointer(e.pointerId);}
@@ -695,13 +703,16 @@ body{padding:18px}.shell{width:min(1100px,100%);margin:0 auto}.topbar{display:fl
     control.addEventListener("pointerdown",startFlightPointer);
     ["pointerup","pointercancel","lostpointercapture"].forEach(ev=>control.addEventListener(ev,endFlightPointer));
   });
+  $("flightButton").addEventListener("click",e=>{e.preventDefault();boostUp();});
   window.addEventListener("pointerup",endFlightPointer);
   window.addEventListener("pointercancel",endFlightPointer);
-  window.addEventListener("blur",()=>{flightPointers.clear();flightKeys.clear();syncFlightHold();});
+  window.addEventListener("blur",()=>{flightPointers.clear();flightKeys.clear();boostUntil=0;syncFlightHold();});
   window.addEventListener("keydown",e=>{
     if(e.code==="Space"||e.code==="ArrowUp"){
-      e.preventDefault();
-      if(gameState==="running"&&!paused){flightKeys.add(e.code);boostUp();}
+      if(gameState==="running"&&!paused){
+        e.preventDefault();
+        if(!flightKeys.has(e.code)){flightKeys.add(e.code);boostUp();}
+      }
     }
     if(e.code==="Escape"&&gameState==="running")$("pauseBtn").click();
   });
