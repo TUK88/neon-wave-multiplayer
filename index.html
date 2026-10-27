@@ -456,8 +456,9 @@ body{padding:18px}.shell{width:min(1100px,100%);margin:0 auto}.topbar{display:fl
     $("distanceText").textContent=Math.floor(distance)+" m";
     $("progressFill").style.width=(progressRatio()*100)+"%";
     syncFlightHold();
-    if(holding) ship.vy=Math.max(-190,ship.vy-680*dt);
-    else ship.vy=Math.min(155,ship.vy+420*dt);
+    // Match the original NEON WAVE's gradual, capped flight response.
+    ship.vy+=(holding?-330:245)*dt;
+    ship.vy=clamp(ship.vy,-190,205);
     ship.y+=ship.vy*dt;
     if(ship.y<28 || ship.y>H-28){ crash("You hit the tunnel edge! Back to the start."); return; }
     const spawnEvery=mode==="levels"?Math.max(.42,1.45-level*.07-courseProgress*.72):mode==="trial"?Math.max(.48,1.3-courseProgress*.68):Math.max(.45,1.28-courseProgress*.78);
@@ -611,13 +612,12 @@ body{padding:18px}.shell{width:min(1100px,100%);margin:0 auto}.topbar{display:fl
     ctx.fillStyle="#151e3d";ctx.fillRect(0,H-8,W,8);ctx.fillStyle="#ff4fbd";ctx.fillRect(0,H-8,W*progressRatio(),8);
   }
   function syncFlightHold(){holding=gameState==="running"&&!paused&&(flightPointers.size>0||flightKeys.size>0||performance.now()<boostUntil);}
-  // A press gives an immediate upward boost; keeping any flight input held continues to lift.
+  // A brief press gives a small, smooth lift; holding continues to lift at the original pace.
   function boostUp(){
     if(gameState!=="running"||paused)return;
-    // A tap still gives a short lift, even if the pointer is released immediately.
-    boostUntil=Math.max(boostUntil,performance.now()+140);
+    // Keep a short tap responsive without injecting an abrupt velocity kick.
+    boostUntil=Math.max(boostUntil,performance.now()+200);
     holding=true;
-    ship.vy=Math.min(ship.vy,-120);
   }
   function releaseFlightPointer(pointerId){flightPointers.delete(pointerId);syncFlightHold();}
   updateLives(); updateCoins(); updateTimerText(); refreshRedeemState(); updateBestTrialDisplay();
